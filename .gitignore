@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Temp files
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# pi temp files
+/tmp/pi-loaded-skills.json
