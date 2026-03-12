@@ -80,8 +80,29 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Note: We don't clear the temp file on shutdown - it will be overwritten on next load
-  // The file persisting is useful for debugging but doesn't affect functionality
+  // Track if we're restoring from a reload
+  let isReloading = false;
+  
+  // On session start - check if we just reloaded
+  pi.on("session_start", async (event, ctx) => {
+    // Check if temp file exists and we didn't just reload (fresh start)
+    if (!isReloading && fs.existsSync(STORAGE_FILE)) {
+      // Fresh start - clear the temp file
+      clearFile();
+      return;
+    }
+    
+    // This is a reload - restore skills
+    if (fs.existsSync(STORAGE_FILE)) {
+      const paths = restoreFromFile();
+      if (paths.length > 0) {
+        ctx.ui.notify(`Restored ${paths.length} skills from previous session`, "info");
+      }
+    }
+    
+    // Reset the reload flag
+    isReloading = false;
+  });
 
   /**
    * Find SKILL.md path from a given path (file or directory)
@@ -323,6 +344,7 @@ export default function (pi: ExtensionAPI) {
       // Trigger reload to re-discover skills and save state
       if (loaded) {
         saveToFile();
+        isReloading = true;
         await ctx.reload();
       }
     },
@@ -366,6 +388,7 @@ export default function (pi: ExtensionAPI) {
       // Trigger reload to update skill list and save state
       if (unloaded) {
         saveToFile();
+        isReloading = true;
         await ctx.reload();
       }
     },
