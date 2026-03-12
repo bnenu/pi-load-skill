@@ -332,12 +332,25 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify("Invalid skill or already loaded", "warning");
         }
       } else if (stat.isDirectory()) {
-        const skills = loadSkillsFromDirectory(targetPath);
-        if (skills.length > 0) {
-          ctx.ui.notify(`Loaded ${skills.length} skills: ${skills.map(s => s.name).join(", ")}`, "success");
-          loaded = true;
+        // First, check if this directory itself contains SKILL.md (single skill)
+        const singleSkillPath = path.join(targetPath, "SKILL.md");
+        if (fs.existsSync(singleSkillPath)) {
+          const skill = loadSkill(targetPath, true);
+          if (skill) {
+            ctx.ui.notify(`Loaded skill: ${skill.name}`, "success");
+            loaded = true;
+          } else {
+            ctx.ui.notify("Invalid skill or already loaded", "warning");
+          }
         } else {
-          ctx.ui.notify("No valid skills found in directory", "warning");
+          // Not a single skill, look for subdirectories with SKILL.md
+          const skills = loadSkillsFromDirectory(targetPath);
+          if (skills.length > 0) {
+            ctx.ui.notify(`Loaded ${skills.length} skills: ${skills.map(s => s.name).join(", ")}`, "success");
+            loaded = true;
+          } else {
+            ctx.ui.notify("No valid skills found in directory", "warning");
+          }
         }
       }
       
@@ -453,6 +466,23 @@ export default function (pi: ExtensionAPI) {
           details: { error: true },
         };
       } else if (stat.isDirectory()) {
+        // First, check if this directory itself contains SKILL.md (single skill)
+        const singleSkillPath = path.join(targetPath, "SKILL.md");
+        if (fs.existsSync(singleSkillPath)) {
+          const skill = loadSkill(targetPath, true);
+          if (skill) {
+            return {
+              content: [{ type: "text", text: `Loaded skill: ${skill.name}` }],
+              details: { loaded: skill.name, path: skill.path },
+            };
+          }
+          return {
+            content: [{ type: "text", text: "Invalid skill or already loaded" }],
+            details: { error: true },
+          };
+        }
+        
+        // Not a single skill, look for subdirectories with SKILL.md
         const skills = loadSkillsFromDirectory(targetPath);
         return {
           content: [{ type: "text", text: `Loaded ${skills.length} skills: ${skills.map(s => s.name).join(", ")}` }],
