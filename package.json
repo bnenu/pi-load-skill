@@ -1,12 +1,8 @@
 {
   "name": "pi-load-skill",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pi extension for loading skills on demand from any location",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": ["pi", "skills", "extension", "coding-agent"],
+  "keywords": ["pi", "skills", "extension", "load-skills", "skills-on-demand"],
   "author": "Bogdan Nenu",
   "license": "MIT",
   "type": "commonjs",
@@ -14,8 +10,12 @@
     "jiti": "^2.6.1"
   },
   "pi": {
-    "extensions": ["./load-skills.ts"]
+    "extensions": ["./extentions"]
   },
+  "files": [
+    "extensions/",
+    "README.md"
+  ],
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": ">=0.50.0"
   }

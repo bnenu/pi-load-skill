@@ -1,6 +1,6 @@
 # pi-load-skill
 
-Load your skills on demand from any location. Keep your agent lean, don't load all your skills when you don't need them, add only the ones you need in that session.
+Load your skills on demand from any location. Keep your [pi](https://shittycodingagent.ai) agent lean, don't load all your skills when you don't need them, add only the ones you need in that session.
 
 ## Features
 
@@ -11,10 +11,10 @@ Load your skills on demand from any location. Keep your agent lean, don't load a
 
 ## Installation
 
-### Option 1: From npm (coming soon)
+### Option 1: From npm
 
 ```bash
-pi install pi-load-skill
+pi install npm:pi-load-skill
 ```
 
 ### Option 2: Local development
