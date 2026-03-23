@@ -1,12 +1,12 @@
 # pi-load-skill
 
-Load your skills on demand from any location. Keep your [pi](https://shittycodingagent.ai) agent lean, don't load all your skills when you don't need them, add only the ones you need in that session.
+Load your skills on demand from any location. Keep your [pi](https://shittycodingagent.ai) agent lean — don't load all your skills when you don't need them, add only the ones you need for that session.
 
 ## Features
 
 - **Load skills on-demand**: Load individual skills or entire skill directories from any path
-- **Session-scoped**: Skills are available only for the current session
-- **Temporary persistence**: Skills persist through reloads but not across fresh sessions
+- **Session-scoped**: Skills are available for the current pi session and survive `/reload`
+- **Native injection**: Loaded skills appear in the system prompt with name, description, and location — the agent can read the full skill content on demand
 - **Unload skills**: Remove loaded skills when no longer needed
 
 ## Installation
@@ -20,14 +20,7 @@ pi install npm:pi-load-skill
 ### Option 2: Local development
 
 ```bash
-cd pi-load-skill
-pi install ./load-skills.ts
-```
-
-Or run directly:
-
-```bash
-pi -e ./load-skills.ts
+pi -e ./extensions/load-skills.ts
 ```
 
 ## Usage
@@ -46,8 +39,9 @@ pi -e ./load-skills.ts
 
 The extension will:
 1. Find all skills in the directory (or validate a single skill)
-2. Add them to pi's skill discovery system
-3. They appear in the available skills list
+2. Add them to pi's skill discovery system via `resources_discover`
+3. They appear in the `<available_skills>` section of the system prompt with their file location
+4. The agent can read the full skill content on demand using the `read` tool
 
 ### List Loaded Skills
 
@@ -70,25 +64,33 @@ The extension will:
 ## Example
 
 ```bash
-# Start pi with the extension
-pi -e ./load-skills.ts
+# Start pi
+pi
 
 # In the pi session:
 /load-skills ./my-skills
 
-# Now you can use the skills
-/skill:my-skill
+# Skills now appear in the system prompt — the agent can use them
+What skills do you have available?
 
-# Or ask the agent about available skills
-What skills are available?
+# Unload when done
+/unload-skills
 ```
 
 ## How It Works
 
-1. **On load**: The extension validates the skill paths and checks for `SKILL.md` files
-2. **On first run**: Skills are added to the system via `resources_discover` event
-3. **Reload**: When loading skills, pi reloads to re-discover resources - skills persist via a temp file
-4. **Fresh start**: When starting pi fresh (not reloaded), the temp file is cleared and skills are not restored
+1. **On `/load-skills`**: Skills are validated, added to the in-memory map, saved to a temp file, and pi reloads
+2. **On reload**: `resources_discover(reason="reload")` restores from the temp file — skills survive `/reload`
+3. **On fresh pi start**: `resources_discover(reason="startup")` clears the temp file — no stale skills from a previous session
+
+## Persistence Model
+
+| Event         | Skills in session       |
+|---------------|-------------------------|
+| `/load-skills`| loaded + reload triggered |
+| `/reload`     | persisted ✓             |
+| `/quit`       | gone (process exit)     |
+| pi restart    | gone (temp file cleared on next startup) |
 
 ## Skill Format
 
@@ -109,7 +111,7 @@ Instructions for using the skill...
 
 ## Requirements
 
-- pi >= 0.50.0
+- pi >= 0.62.0
 - Node.js >= 18
 
 ## License
