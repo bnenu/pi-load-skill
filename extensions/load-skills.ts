@@ -214,7 +214,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("load-skills", {
     description:
       "Load one or more skills from a specified location. Accepts a path to a SKILL.md file, a skill directory, or a parent directory (loads all skills inside).",
-    getArgumentCompletions: async (prefix: string) => {
+    getArgumentCompletions: (prefix: string) => {
       try {
         const dir = prefix.includes("/") ? path.dirname(prefix) : ".";
         const base = path.basename(prefix);
@@ -285,7 +285,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("unload-skills", {
     description:
       "Unload skills loaded via /load-skills. Use /unload-skills to unload all, or /unload-skills <name> to unload a specific skill.",
-    getArgumentCompletions: async (prefix: string) => {
+    getArgumentCompletions: (prefix: string) => {
       if (loadedSkills.size === 0) return null;
       const items = Array.from(loadedSkills.keys()).map((name) => ({ value: name, label: name }));
       return prefix ? items.filter((i) => i.value.startsWith(prefix)) : items;
