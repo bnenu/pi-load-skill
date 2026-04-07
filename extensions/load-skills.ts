@@ -9,16 +9,9 @@ interface LoadedSkill {
   path: string; // Path to the skill directory (containing SKILL.md)
 }
 
-interface StoredSkill {
-  name: string;
-  path: string;
+interface SkillSnapshot {
+  skills: Array<{ name: string; path: string }>;
 }
-
-// Temp file used to persist loaded skill paths across /reload within a session.
-// Cleared on fresh pi start (resources_discover reason="startup").
-// NOT cleared on /reload (resources_discover reason="reload") so skills survive.
-// Lingering file from a previous /quit is cleaned up on next pi start.
-const STORAGE_FILE = path.join(os.tmpdir(), "pi-loaded-skills.json");
 
 /**
  * Pi extension for loading skills on demand from specified locations.
@@ -28,95 +21,88 @@ const STORAGE_FILE = path.join(os.tmpdir(), "pi-loaded-skills.json");
  * agent to read the full skill content on demand.
  *
  * Persistence model:
- *   /load-skills  → added to map + saved to temp file + reload triggered
- *   /reload       → resources_discover(reload) restores from temp file ✓
- *   /new, /resume → skills NOT re-injected (Option B — intentional)
- *   /quit         → process exit, temp file cleared on next startup
- *   pi restart    → resources_discover(startup) clears temp file, fresh start
+ *   /load-skills   → added to map + snapshot appended to session + reload triggered
+ *   /unload-skills → removed from map + snapshot appended to session + reload triggered
+ *   session_start  → map rebuilt from last pi-load-skill entry in getBranch()
+ *   /new           → no prior entries in new branch → map empty
+ *   /resume        → branch replayed → skills restored
+ *   /fork          → branch up to fork point replayed → correct skills restored
+ *   /reload        → branch replayed → skills restored
+ *   pi restart + resume → branch replayed → skills restored
+ *   pi restart (no resume) → fresh session, no entries → map empty
  */
 export default function (pi: ExtensionAPI) {
   const loadedSkills: Map<string, LoadedSkill> = new Map();
 
-  // ─── Temp file helpers ──────────────────────────────────────────────────────
-
-  function saveToFile(): void {
-    const data: StoredSkill[] = Array.from(loadedSkills.values());
-    fs.writeFileSync(STORAGE_FILE, JSON.stringify(data, null, 2));
-  }
+  // ─── Path helpers ─────────────────────────────────────────────────────────────
 
   /**
-   * Restore skills from temp file into the in-memory map.
-   * Returns the list of restored skill directory paths.
-   * Skips entries whose SKILL.md no longer exists on disk.
+   * Expand a leading `~` or `~/` to the user's home directory.
+   * `~username` is intentionally left unexpanded (requires passwd lookup).
    */
-  function restoreFromFile(): string[] {
-    if (!fs.existsSync(STORAGE_FILE)) {
-      return [];
-    }
-    try {
-      const data = JSON.parse(fs.readFileSync(STORAGE_FILE, "utf-8")) as StoredSkill[];
-      const paths: string[] = [];
-      for (const s of data) {
-        const skillMdPath = path.join(s.path, "SKILL.md");
-        if (fs.existsSync(skillMdPath)) {
-          loadedSkills.set(s.name, { name: s.name, path: s.path });
-          paths.push(s.path);
-        }
-      }
-      return paths;
-    } catch {
-      return [];
-    }
+  function expandTilde(p: string): string {
+    if (p === "~") return os.homedir();
+    if (p.startsWith("~/") || p.startsWith("~\\")) return os.homedir() + p.slice(1);
+    return p;
   }
 
-  function clearFile(): void {
-    if (fs.existsSync(STORAGE_FILE)) {
-      fs.unlinkSync(STORAGE_FILE);
-    }
+  // ─── Snapshot helper ────────────────────────────────────────────────────────
+
+  /**
+   * Append a snapshot of the current loadedSkills map to the session file.
+   * Called after every load or unload operation so the session entry captures
+   * the full current state. On session_start, only the last snapshot in the
+   * current branch is used for restoration.
+   */
+  function saveSnapshot(): void {
+    pi.appendEntry("pi-load-skill", { skills: Array.from(loadedSkills.values()) } satisfies SkillSnapshot);
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
 
   /**
-   * session_start: restore from temp file into the in-memory map.
-   * On reason="startup" the file will have been cleared by resources_discover
-   * before this runs (pi fires session_start then resources_discover), so
-   * restoreFromFile() is a no-op. On reason="reload" the file is intact and
-   * skills are restored.
+   * session_start: rebuild the in-memory map from the session branch.
    *
-   * Note: pi fires session_start BEFORE resources_discover. On a fresh start the
-   * file may still linger here (it gets cleared in resources_discover). That is
-   * fine — the map is populated but resources_discover(startup) returns empty,
-   * so pi never injects those stale skills into the system prompt.
+   * getBranch() returns entries in leaf→root order. We find the first
+   * (most recent) pi-load-skill custom entry and restore the map from its
+   * snapshot. Entries whose SKILL.md no longer exists on disk are skipped.
+   *
+   * Works for all reasons: startup, reload, new, resume, fork.
+   * - "new": fresh branch with no entries → map stays empty
+   * - "resume"/"fork": branch replayed → skills restored from last snapshot
+   * - "reload"/"startup": same branch → skills restored from last snapshot
    */
   pi.on("session_start", async (_event, ctx) => {
-    restoreFromFile();
+    loadedSkills.clear();
+
+    const branch = ctx.sessionManager.getBranch();
+    for (const entry of branch) {
+      if (entry.type === "custom" && entry.customType === "pi-load-skill") {
+        // First match is the most recent snapshot (getBranch returns leaf→root)
+        const snapshot = entry.data as SkillSnapshot;
+        for (const s of snapshot.skills ?? []) {
+          const skillMdPath = path.join(s.path, "SKILL.md");
+          if (fs.existsSync(skillMdPath)) {
+            loadedSkills.set(s.name, { name: s.name, path: s.path });
+          }
+        }
+        break; // last snapshot wins — stop after first match
+      }
+    }
+
     ctx.ui.notify("Skill loader ready. Use /load-skills <path> to load skills from any location.", "info");
   });
 
   /**
-   * resources_discover: the primary integration point with pi's skill system.
+   * resources_discover: contribute loaded skill paths to pi's skill system.
    *
-   * reason="startup" → fresh pi start. Clear the temp file (removes any stale
-   *   file from a previous session) and return no paths.
-   *
-   * reason="reload"  → triggered by /reload (manual or after /load-skills).
-   *   Restore from temp file and return paths so pi injects them into the
-   *   system prompt with name + description + location.
+   * Reads directly from the in-memory map, which is always up-to-date:
+   * populated by session_start on every session transition, and mutated
+   * immediately by /load-skills and /unload-skills commands.
    */
-  pi.on("resources_discover", (event) => {
-    if (event.reason === "startup") {
-      clearFile();
-      loadedSkills.clear();
-      return {};
-    }
-
-    // reason === "reload"
-    const paths = restoreFromFile();
-    if (paths.length === 0) {
-      return {};
-    }
-    return { skillPaths: paths };
+  pi.on("resources_discover", (_event) => {
+    if (loadedSkills.size === 0) return {};
+    return { skillPaths: Array.from(loadedSkills.values()).map((s) => s.path) };
   });
 
   // ─── Skill path helpers ─────────────────────────────────────────────────────
@@ -237,7 +223,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const targetPath = path.resolve(args);
+      const targetPath = path.resolve(expandTilde(args));
       if (!fs.existsSync(targetPath)) {
         ctx.ui.notify(`Path not found: ${targetPath}`, "error");
         return;
@@ -276,7 +262,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       if (loaded) {
-        saveToFile();
+        saveSnapshot();
         await ctx.reload();
       }
     },
@@ -308,7 +294,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       if (unloaded) {
-        saveToFile();
+        saveSnapshot();
         await ctx.reload();
       }
     },
@@ -333,7 +319,7 @@ export default function (pi: ExtensionAPI) {
       unload: Type.Optional(Type.Boolean({ description: "If true, unload the skill instead of loading" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const targetPath = path.resolve(params.path);
+      const targetPath = path.resolve(expandTilde(params.path));
 
       if (params.unload) {
         const skill = Array.from(loadedSkills.values()).find((s) => s.path === targetPath);

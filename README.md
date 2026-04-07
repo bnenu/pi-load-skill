@@ -5,7 +5,7 @@ Load your skills on demand from any location. Keep your [pi](https://shittycodin
 ## Features
 
 - **Load skills on-demand**: Load individual skills or entire skill directories from any path
-- **Session-scoped**: Skills are available for the current pi session and survive `/reload`
+- **Session-scoped**: Skills persist in the session file and are restored automatically on `/reload`, `/resume`, `/fork`, and pi restart
 - **Native injection**: Loaded skills appear in the system prompt with name, description, and location — the agent can read the full skill content on demand
 - **Unload skills**: Remove loaded skills when no longer needed
 
@@ -79,18 +79,22 @@ What skills do you have available?
 
 ## How It Works
 
-1. **On `/load-skills`**: Skills are validated, added to the in-memory map, saved to a temp file, and pi reloads
-2. **On reload**: `resources_discover(reason="reload")` restores from the temp file — skills survive `/reload`
-3. **On fresh pi start**: `resources_discover(reason="startup")` clears the temp file — no stale skills from a previous session
+1. **On `/load-skills`**: Skills are validated, added to the in-memory map, a snapshot is appended to the session file via `pi.appendEntry()`, and pi reloads
+2. **On any session transition** (`/reload`, `/resume`, `/fork`, pi restart): `session_start` fires, the extension replays the current branch via `ctx.sessionManager.getBranch()`, finds the last `pi-load-skill` snapshot entry, and restores the map from it
+3. **On `/new`**: A fresh session has no prior entries — the map starts empty
 
 ## Persistence Model
 
-| Event         | Skills in session       |
-|---------------|-------------------------|
-| `/load-skills`| loaded + reload triggered |
-| `/reload`     | persisted ✓             |
-| `/quit`       | gone (process exit)     |
-| pi restart    | gone (temp file cleared on next startup) |
+| Event                  | Skills in session                           |
+|------------------------|---------------------------------------------|
+| `/load-skills`         | snapshot appended to session + reload triggered |
+| `/unload-skills`       | snapshot appended to session + reload triggered |
+| `/reload`              | branch replayed → skills restored ✓         |
+| `/new`                 | fresh session, no entries → map empty ✓     |
+| `/resume`              | branch replayed → skills restored ✓         |
+| `/fork`                | branch up to fork point replayed ✓          |
+| pi restart + resume    | branch replayed → skills restored ✓         |
+| pi restart (no resume) | fresh session → map empty ✓                 |
 
 ## Skill Format
 
@@ -111,9 +115,13 @@ Instructions for using the skill...
 
 ## Requirements
 
-- pi >= 0.62.0
+- pi >= 0.65.0
 - Node.js >= 18
 
 ## License
 
 MIT
+
+---
+
+Made with [reespec](https://reespec.dev) and ❤️ in EU

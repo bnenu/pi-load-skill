@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-04-07
+
+### Fixed
+
+- **Tilde expansion in skill paths** — `/load-skills ~/path` and the `load_skill` tool
+  now correctly expand a leading `~` to the user's home directory before resolving the path.
+  Previously, `path.resolve("~/skills/xyz")` treated `~` as a literal directory name,
+  producing a "Path not found" error on macOS and Linux.
+
+- **`/load-skills` and `/unload-skills` no longer crash pi** — removed erroneous `async`
+  keyword from both `getArgumentCompletions` callbacks. The implementations are purely
+  synchronous (`readdirSync`, `Array.from`), so marking them `async` unnecessarily wrapped
+  their return values in a `Promise`, causing a crash in pi's autocomplete pipeline.
+
+### Changed
+
+- **Persistence model replaced with session-entry storage** — skills are now persisted via
+  `pi.appendEntry("pi-load-skill", { skills: [...] })` instead of a temp file. Every
+  `/load-skills` and `/unload-skills` operation appends a snapshot entry to the session file.
+  On `session_start`, the extension replays `ctx.sessionManager.getBranch()` and restores
+  the map from the last snapshot in the current branch.
+- **Correct behavior across all session transitions** — skills now survive `/reload`,
+  `/resume`, and `/fork` correctly. `/new` starts with an empty skill set. Skills also
+  survive pi restarts when the session is resumed.
+- **Removed temp-file persistence** — `STORAGE_FILE`, `saveToFile`, `restoreFromFile`,
+  `clearFile`, and the `node:os` import are fully removed. No temp files are written or read.
+- **Minimum pi version unchanged** — still `>=0.62.0`, but 0.65.x is required for correct
+  `/new`, `/resume`, and `/fork` behavior due to the `session_start` reason changes in 0.65.
+
+### Persistence model
+
+| Event                     | Skills in session                          |
+|---------------------------|--------------------------------------------|
+| `/load-skills`            | snapshot appended to session + reload triggered |
+| `/unload-skills`          | snapshot appended to session + reload triggered |
+| `/reload`                 | branch replayed → skills restored ✓        |
+| `/new`                    | fresh session, no entries → map empty ✓    |
+| `/resume`                 | branch replayed → skills restored ✓        |
+| `/fork`                   | branch up to fork point replayed ✓         |
+| pi restart + resume       | branch replayed → skills restored ✓        |
+| pi restart (no resume)    | fresh session → map empty ✓                |
+
 ## [1.1.0] - 2026-03-23
 
 ### Changed

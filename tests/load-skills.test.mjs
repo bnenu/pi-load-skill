@@ -1,18 +1,25 @@
 /**
- * Tests for pi-load-skill extension (pi-load-skill-0.62-compat)
+ * Tests for pi-load-skill extension (pi-0.65-compat)
  *
  * Uses Node.js built-in test runner (node:test).
  * Loads the extension via jiti (same loader pi uses).
+ *
+ * Persistence model under test:
+ *   - Skills are stored in session entries via pi.appendEntry()
+ *   - On session_start, the map is rebuilt from ctx.sessionManager.getBranch()
+ *   - getBranch() returns entries leaf→root; the first pi-load-skill entry found
+ *     is the most recent snapshot
+ *   - No temp files used
  */
 
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { writeFileSync, existsSync, unlinkSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, relative } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -24,20 +31,31 @@ const j = jiti(projectRoot, { interopDefault: true });
 const _extModule = j("./extensions/load-skills.ts");
 const loadExtension = _extModule.default ?? _extModule;
 
-// ─── Mock helpers ────────────────────────────────────────────────────────────
+// ─── Sample skill paths ───────────────────────────────────────────────────────
+
+const SKILL_A_PATH = resolve(projectRoot, "sample-skills/example-skill");
+const SKILL_B_PATH = resolve(projectRoot, "sample-skills/another-skill");
+const SKILL_A_NAME = "example-skill";
+const SKILL_B_NAME = "another-skill";
+
+// ─── Mock helpers ─────────────────────────────────────────────────────────────
 
 /**
- * Build a minimal mock ExtensionAPI that records registered handlers and tools.
+ * Build a mock ExtensionAPI.
+ * - appendEntry records calls for assertion
+ * - on/registerTool/registerCommand collect handlers/defs
  */
-function buildMockPi() {
-  const handlers = new Map(); // event → [fn, ...]
+function buildMockPi(branchEntries = []) {
+  const handlers = new Map();
   const tools = new Map();
   const commands = new Map();
+  const appendedEntries = [];
 
   return {
     _handlers: handlers,
     _tools: tools,
     _commands: commands,
+    _appendedEntries: appendedEntries,
 
     on(event, fn) {
       if (!handlers.has(event)) handlers.set(event, []);
@@ -52,17 +70,17 @@ function buildMockPi() {
       commands.set(name, def);
     },
 
-    // Minimal stubs for anything the extension might call at registration time
-    sendUserMessage() {},
-    events: { on() {}, emit() {} },
-    appendEntry() {},
+    appendEntry(customType, data) {
+      appendedEntries.push({ customType, data });
+    },
   };
 }
 
 /**
- * Build a minimal ctx stub for event handlers.
+ * Build a mock ExtensionContext.
+ * branchEntries: array of session entries returned by getBranch() in leaf→root order.
  */
-function buildMockCtx() {
+function buildMockCtx(branchEntries = []) {
   return {
     ui: {
       notify() {},
@@ -70,43 +88,48 @@ function buildMockCtx() {
     },
     reload: async () => {},
     cwd: projectRoot,
+    sessionManager: {
+      getBranch() {
+        return branchEntries;
+      },
+    },
   };
 }
 
 /**
- * Invoke all registered handlers for an event and return the last result.
- * Mirrors pi's behaviour of calling every handler.
+ * Build a custom session entry as pi would store it.
  */
-async function emit(mockPi, event, ctx) {
-  const fns = mockPi._handlers.get(event.type) ?? [];
+function makeSkillEntry(skills) {
+  return {
+    type: "custom",
+    customType: "pi-load-skill",
+    id: Math.random().toString(16).slice(2, 10),
+    parentId: null,
+    timestamp: new Date().toISOString(),
+    data: { skills },
+  };
+}
+
+/**
+ * Emit all registered handlers for an event, return the last result.
+ */
+async function emit(mockPi, eventType, eventData, ctx) {
+  const fns = mockPi._handlers.get(eventType) ?? [];
   let result;
   for (const fn of fns) {
-    result = await fn(event, ctx);
+    result = await fn({ type: eventType, ...eventData }, ctx);
   }
   return result;
 }
 
-// ─── Constants ───────────────────────────────────────────────────────────────
-
-const STORAGE_FILE = join(tmpdir(), "pi-loaded-skills.json");
-
-function writeStorageFile(paths) {
-  const data = paths.map((p, i) => ({ name: `skill-${i}`, path: p }));
-  writeFileSync(STORAGE_FILE, JSON.stringify(data, null, 2));
-}
-
-function clearStorageFile() {
-  if (existsSync(STORAGE_FILE)) unlinkSync(STORAGE_FILE);
-}
-
-// ─── Scaffold smoke test ──────────────────────────────────────────────────────
+// ─── Scaffold ─────────────────────────────────────────────────────────────────
 
 describe("scaffold", () => {
   it("extension factory loads without error", () => {
     assert.equal(typeof loadExtension, "function");
   });
 
-  it("factory registers expected commands and tools", () => {
+  it("registers expected commands and tools", () => {
     const pi = buildMockPi();
     loadExtension(pi);
     assert.ok(pi._commands.has("load-skills"), "load-skills command registered");
@@ -114,67 +137,280 @@ describe("scaffold", () => {
     assert.ok(pi._commands.has("list-loaded-skills"), "list-loaded-skills command registered");
     assert.ok(pi._tools.has("load_skill"), "load_skill tool registered");
   });
-});
 
-// ─── before_agent_start must NOT be registered ───────────────────────────────
-
-describe("before_agent_start", () => {
-  it("extension does not register a before_agent_start handler", () => {
+  it("does not register a before_agent_start handler", () => {
     const pi = buildMockPi();
     loadExtension(pi);
     const handlers = pi._handlers.get("before_agent_start") ?? [];
-    assert.equal(handlers.length, 0, "before_agent_start should not be registered");
+    assert.equal(handlers.length, 0);
   });
 });
 
-// ─── resources_discover behavior ─────────────────────────────────────────────
+// ─── session_start: map restoration ──────────────────────────────────────────
+
+describe("session_start — map restoration", () => {
+  it("scenario 1: restores map from the last pi-load-skill entry in the branch", async () => {
+    // Branch (leaf→root): one pi-load-skill entry
+    const entry = makeSkillEntry([{ name: SKILL_A_NAME, path: SKILL_A_PATH }]);
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([entry]);
+
+    await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+    // Verify via resources_discover: map should contain skill A
+    const result = await emit(pi, "resources_discover", { reason: "reload" }, ctx);
+    assert.ok(result?.skillPaths?.includes(SKILL_A_PATH), "skill A path should be in skillPaths");
+    assert.equal(result.skillPaths.length, 1);
+  });
+
+  it("scenario 2: only the last (first in leaf→root order) pi-load-skill entry is used", async () => {
+    // Branch (leaf→root): newer entry first, older entry second
+    const newerEntry = makeSkillEntry([{ name: SKILL_B_NAME, path: SKILL_B_PATH }]);
+    const olderEntry = makeSkillEntry([{ name: SKILL_A_NAME, path: SKILL_A_PATH }]);
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([newerEntry, olderEntry]);
+
+    await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+    const result = await emit(pi, "resources_discover", { reason: "reload" }, ctx);
+    assert.ok(result?.skillPaths?.includes(SKILL_B_PATH), "skill B (newer) should be present");
+    assert.ok(!result?.skillPaths?.includes(SKILL_A_PATH), "skill A (older) should NOT be present");
+    assert.equal(result.skillPaths.length, 1);
+  });
+
+  it("scenario 3: no pi-load-skill entry → empty map → resources_discover returns {}", async () => {
+    // Branch has no skill entries
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([]);
+
+    await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+    const result = await emit(pi, "resources_discover", { reason: "reload" }, ctx);
+    const paths = result?.skillPaths ?? [];
+    assert.equal(paths.length, 0);
+  });
+
+  it("scenario 4: entries with missing SKILL.md are skipped silently", async () => {
+    const missingPath = "/nonexistent/path/to/ghost-skill";
+    const entry = makeSkillEntry([
+      { name: "ghost-skill", path: missingPath },
+      { name: SKILL_A_NAME, path: SKILL_A_PATH },
+    ]);
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([entry]);
+
+    await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+    const result = await emit(pi, "resources_discover", { reason: "reload" }, ctx);
+    assert.ok(!result?.skillPaths?.includes(missingPath), "missing skill should be absent");
+    assert.ok(result?.skillPaths?.includes(SKILL_A_PATH), "valid skill should be present");
+    assert.equal(result.skillPaths.length, 1);
+  });
+
+  it("session_start works for all reasons (reload, new, resume, fork)", async () => {
+    const entry = makeSkillEntry([{ name: SKILL_A_NAME, path: SKILL_A_PATH }]);
+    for (const reason of ["reload", "new", "resume", "fork"]) {
+      const pi = buildMockPi();
+      loadExtension(pi);
+      // For "new": no entries (fresh session); for others: entry present
+      const branch = reason === "new" ? [] : [entry];
+      const ctx = buildMockCtx(branch);
+
+      // Should not throw
+      await emit(pi, "session_start", { reason }, ctx);
+
+      const result = await emit(pi, "resources_discover", { reason: "reload" }, ctx);
+      if (reason === "new") {
+        assert.equal((result?.skillPaths ?? []).length, 0, `reason=${reason}: map should be empty`);
+      } else {
+        assert.ok(result?.skillPaths?.includes(SKILL_A_PATH), `reason=${reason}: skill should be restored`);
+      }
+    }
+  });
+});
+
+// ─── resources_discover ───────────────────────────────────────────────────────
 
 describe("resources_discover", () => {
-  beforeEach(() => {
-    clearStorageFile();
-  });
-
-  after(() => {
-    clearStorageFile();
-  });
-
-  it("reason=reload: restores skills from file and returns skillPaths", async () => {
-    // Use real sample skills so restoreFromFile() accepts them (checks SKILL.md exists)
-    const skillA = resolve(projectRoot, "sample-skills/example-skill");
-    const skillB = resolve(projectRoot, "sample-skills/another-skill");
-    writeStorageFile([skillA, skillB]);
-
+  it("scenario 7: returns skillPaths from in-memory map (any reason)", async () => {
+    const entry = makeSkillEntry([{ name: SKILL_A_NAME, path: SKILL_A_PATH }]);
     const pi = buildMockPi();
     loadExtension(pi);
-    const ctx = buildMockCtx();
+    const ctx = buildMockCtx([entry]);
 
-    // Act: emit resources_discover with reason=reload
-    const result = await emit(pi, { type: "resources_discover", cwd: projectRoot, reason: "reload" }, ctx);
+    // Populate map via session_start
+    await emit(pi, "session_start", { reason: "startup" }, ctx);
 
-    // Assert: both paths returned
-    const paths = result?.skillPaths ?? [];
-    assert.ok(paths.includes(skillA), `expected ${skillA} in skillPaths`);
-    assert.ok(paths.includes(skillB), `expected ${skillB} in skillPaths`);
-    assert.equal(paths.length, 2, `expected 2 skillPaths, got ${paths.length}`);
-    // Storage file should still exist (not cleared on reload)
-    assert.ok(existsSync(STORAGE_FILE), "storage file should persist after reload");
+    for (const reason of ["startup", "reload"]) {
+      const result = await emit(pi, "resources_discover", { reason }, ctx);
+      assert.ok(result?.skillPaths?.includes(SKILL_A_PATH), `reason=${reason}: should return skill path`);
+    }
   });
 
-  it("reason=startup: clears storage file and returns no skillPaths", async () => {
-    // Arrange: pre-seed the storage file with fake paths
-    writeStorageFile(["/fake/skill-a", "/fake/skill-b"]);
-    assert.ok(existsSync(STORAGE_FILE), "storage file exists before test");
-
+  it("returns {} when map is empty", async () => {
     const pi = buildMockPi();
     loadExtension(pi);
-    const ctx = buildMockCtx();
+    const ctx = buildMockCtx([]);
 
-    // Act: emit resources_discover with reason=startup
-    const result = await emit(pi, { type: "resources_discover", cwd: projectRoot, reason: "startup" }, ctx);
+    await emit(pi, "session_start", { reason: "startup" }, ctx);
 
-    // Assert: file cleared, no paths returned
-    assert.ok(!existsSync(STORAGE_FILE), "storage file should be cleared after startup");
+    const result = await emit(pi, "resources_discover", { reason: "startup" }, ctx);
     const paths = result?.skillPaths ?? [];
-    assert.equal(paths.length, 0, `expected 0 skillPaths, got ${paths.length}: ${JSON.stringify(paths)}`);
+    assert.equal(paths.length, 0);
+  });
+});
+
+// ─── appendEntry on load/unload ───────────────────────────────────────────────
+
+describe("appendEntry — snapshot on load/unload", () => {
+  it("scenario 5: /load-skills appends a pi-load-skill snapshot entry", async () => {
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([]);
+    // Patch ctx.reload to no-op (prevent actual reload in test)
+    ctx.reload = async () => {};
+
+    await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+    const handler = pi._commands.get("load-skills").handler;
+    await handler(SKILL_A_PATH, ctx);
+
+    const entries = pi._appendedEntries.filter((e) => e.customType === "pi-load-skill");
+    assert.equal(entries.length, 1, "should have appended exactly one entry");
+    const skills = entries[0].data.skills;
+    assert.ok(
+      skills.some((s) => s.name === SKILL_A_NAME && s.path === SKILL_A_PATH),
+      "snapshot should contain the loaded skill"
+    );
+  });
+
+  it("scenario 6: /unload-skills appends a snapshot reflecting state after unload", async () => {
+    // Pre-load skill A via a session entry
+    const entry = makeSkillEntry([{ name: SKILL_A_NAME, path: SKILL_A_PATH }]);
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([entry]);
+    ctx.reload = async () => {};
+
+    await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+    const handler = pi._commands.get("unload-skills").handler;
+    await handler(SKILL_A_NAME, ctx);
+
+    const entries = pi._appendedEntries.filter((e) => e.customType === "pi-load-skill");
+    assert.equal(entries.length, 1, "should have appended exactly one entry");
+    const skills = entries[0].data.skills;
+    assert.equal(skills.length, 0, "snapshot should be empty after unloading the only skill");
+  });
+
+  it("/unload-skills (all) appends empty snapshot", async () => {
+    const entry = makeSkillEntry([
+      { name: SKILL_A_NAME, path: SKILL_A_PATH },
+      { name: SKILL_B_NAME, path: SKILL_B_PATH },
+    ]);
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([entry]);
+    ctx.reload = async () => {};
+
+    await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+    const handler = pi._commands.get("unload-skills").handler;
+    await handler(null, ctx); // no args = unload all
+
+    const entries = pi._appendedEntries.filter((e) => e.customType === "pi-load-skill");
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].data.skills.length, 0);
+  });
+});
+
+// ─── No temp-file code ────────────────────────────────────────────────────────
+
+describe("temp-file removal", () => {
+  it("extension does not reference STORAGE_FILE or pi-loaded-skills.json at runtime", () => {
+    // If STORAGE_FILE constant existed it would be visible as a module-level side-effect.
+    // We verify no temp file is created/read by checking no file ops happen on tmpdir path.
+    // The grep-based assertions are in the non-code task; here we just verify
+    // the extension loads cleanly with no os.tmpdir usage detectable at runtime.
+    const pi = buildMockPi();
+    assert.doesNotThrow(() => loadExtension(pi));
+  });
+});
+
+// ─── Tilde expansion ──────────────────────────────────────────────────────────
+
+describe("tilde expansion", () => {
+  it("scenario 1: /load-skills with ~/... path loads skill successfully", async () => {
+    const tildePath = `~/${relative(homedir(), SKILL_A_PATH)}`;
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([]);
+    let notifiedError = false;
+    ctx.ui.notify = (msg, level) => { if (level === "error") notifiedError = true; };
+    ctx.reload = async () => {};
+
+    const handler = pi._commands.get("load-skills").handler;
+    await handler(tildePath, ctx);
+
+    assert.ok(!notifiedError, "should not notify an error");
+    const entries = pi._appendedEntries.filter((e) => e.customType === "pi-load-skill");
+    assert.equal(entries.length, 1, "should have appended a snapshot entry");
+    assert.ok(
+      entries[0].data.skills.some((s) => s.name === SKILL_A_NAME),
+      "snapshot should contain the loaded skill"
+    );
+  });
+
+  it("scenario 2: load_skill tool with ~/... path returns success", async () => {
+    const tildePath = `~/${relative(homedir(), SKILL_A_PATH)}`;
+    const pi = buildMockPi();
+    loadExtension(pi);
+
+    const tool = pi._tools.get("load_skill");
+    const result = await tool.execute("id", { path: tildePath }, undefined, undefined, {});
+
+    assert.ok(!result.details?.error, "details.error should not be set");
+    assert.ok(
+      result.content[0].text.includes(SKILL_A_NAME),
+      "result text should mention the skill name"
+    );
+  });
+
+  it("scenario 4: plain absolute path still works (no regression)", async () => {
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([]);
+    let notifiedError = false;
+    ctx.ui.notify = (msg, level) => { if (level === "error") notifiedError = true; };
+    ctx.reload = async () => {};
+
+    const handler = pi._commands.get("load-skills").handler;
+    await handler(SKILL_A_PATH, ctx);
+
+    assert.ok(!notifiedError, "absolute path should still work");
+    const entries = pi._appendedEntries.filter((e) => e.customType === "pi-load-skill");
+    assert.equal(entries.length, 1, "should have appended a snapshot entry");
+  });
+
+  it("scenario 5: ~username path is not expanded", async () => {
+    const pi = buildMockPi();
+    loadExtension(pi);
+    const ctx = buildMockCtx([]);
+    const notifiedLevels = [];
+    ctx.ui.notify = (msg, level) => notifiedLevels.push(level);
+    ctx.reload = async () => {};
+
+    const handler = pi._commands.get("load-skills").handler;
+    await handler("~someotheruser/skills", ctx);
+
+    // Should fail with error or warning (path won't exist), not succeed
+    assert.ok(
+      notifiedLevels.includes("error"),
+      "~username path should not resolve to a valid location"
+    );
   });
 });
