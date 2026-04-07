@@ -1,6 +1,6 @@
 {
   "name": "pi-load-skill",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Pi extension for loading skills on demand from any location",
   "keywords": [
     "pi-package",

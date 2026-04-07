@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-04-07
+
+### Changed
+
+- Added "Made with reespec" note to README.
+
 ## [1.2.0] - 2026-04-07
 
 ### Fixed
