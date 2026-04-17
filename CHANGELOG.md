@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2] - 2026-04-17
+
+### Changed
+
+- **Bumped minimum pi version to `>=0.67.0`** — aligned with latest pi release.
+
 ## [1.2.1] - 2026-04-07
 
 ### Changed

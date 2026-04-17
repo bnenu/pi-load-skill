@@ -4,7 +4,7 @@ description: Implement tasks from a reespec request, one RED→GREEN cycle at a 
 license: MIT
 metadata:
   author: reespec
-  version: "1.1"
+  version: "1.2"
 ---
 
 Implement tasks from a reespec request. One RED→GREEN cycle at a time.
@@ -28,9 +28,37 @@ reespec/requests/<name>/design.md
 reespec/requests/<name>/specs/
 reespec/requests/<name>/tasks.md
 reespec/decisions.md
+reespec/requests/<name>/evaluations.md  (if it exists)
 ```
 
 Do NOT begin implementation without reading full context.
+
+### 2a. Check for previous evaluations
+
+After reading context, check whether `evaluations.md` exists:
+
+```bash
+ls reespec/requests/<name>/evaluations.md 2>/dev/null
+```
+
+**If it exists** — read the LATEST entry only (the last `## Evaluation —` block at
+the bottom of the file). Announce to the user:
+
+```
+Found previous evaluation (<date>).
+Gaps flagged:
+⚠️  <capability> — <one-line reason from verdict>
+❌  <capability> — <one-line reason from verdict>
+I'll focus on these first, then work remaining tasks.
+```
+
+Only surface PARTIAL and UNSATISFIED items — skip SATISFIED and UNCLEAR.
+If all items were SATISFIED, announce:
+```
+Found previous evaluation (<date>) — all capabilities satisfied. Proceeding normally.
+```
+
+**If it does not exist** — proceed normally, no mention.
 
 ### 3. Show current progress
 
@@ -169,6 +197,7 @@ All tasks done. Ready to archive.
 ## Guardrails
 
 - **Read all context first** before any implementation
+- **Read only the latest evaluation entry** — older entries are history, not current gaps
 - **RED before ACTION** — write/run the test or check the assertion first, always
 - **Code RED = actual test file** — write it, run it, confirm it fails
 - **GREEN = run it again** — never assume, always verify
