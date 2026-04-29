@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.3] - 2026-04-29
+
+### Changed
+
+- **Bumped minimum pi version to `>=0.70.6`** — aligned with latest pi release.
+- **Replaced `@sinclair/typebox` 0.34.x with `typebox` 1.x** — migrated tool parameter schemas and dev dependency to the new `typebox` package name, matching pi's TypeBox 1.x migration introduced in pi 0.69.0. The `Type` API surface used by the extension (`Type.Object`, `Type.String`, `Type.Boolean`, etc.) is compatible and requires no code changes beyond the import path.
+
 ## [1.2.2] - 2026-04-17
 
 ### Changed
