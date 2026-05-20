@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.4] - 2026-05-20
+
+### Changed
+
+- **Updated peer dependency to `@earendil-works/pi-coding-agent >= 0.75.0`** — pi was renamed from `@mariozechner/pi-coding-agent` to `@earendil-works/pi-coding-agent` in 0.74.0. The minimum floor is raised to 0.75.0 to track the current stable release.
+- **Updated `ExtensionAPI` import to `@earendil-works/pi-coding-agent`** — aligned the type import in `extensions/load-skills.ts` with the new package scope.
+- **Bumped `jiti` to `^2.7.0`** — aligned with the version pi itself uses since 0.73.1 (switched from the `@mariozechner/jiti` fork to upstream jiti 2.7).
+- **Bumped `typebox` devDependency to `^1.1.38`** — patch update, no API changes.
+
 ## [1.2.3] - 2026-04-29
 
 ### Changed
