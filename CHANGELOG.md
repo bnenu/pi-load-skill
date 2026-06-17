@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-06-17
+
+### Changed
+
+- **Bumped minimum pi version to `>=0.79.0`** — aligned with latest pi release. No breaking API changes affect this extension; all used APIs (`session_start`, `resources_discover`, `appendEntry`, `getBranch()`, `registerCommand`, `registerTool`) remain stable.
+- **Bumped `typebox` devDependency to `^1.2.0`** — minor update from 1.1.x, no API changes to the `Type` surface used by the extension.
+
 ## [1.2.4] - 2026-05-20
 
 ### Changed
