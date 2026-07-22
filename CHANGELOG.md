@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1] - 2026-07-22
+
+### Changed
+
+- **Bumped minimum pi version to `>=0.81.0`** — aligned with latest pi release. No breaking API changes affect this extension; all used APIs (`session_start`, `resources_discover`, `appendEntry`, `getBranch()`, `registerCommand`, `registerTool`, `ctx.reload()`, `ctx.ui.notify`) remain stable across 0.80.x–0.81.x. The 0.80.8 SDK breaking changes (`ModelRuntime`, async `ModelRegistry.refresh()`) and 0.80.7 `openai-responses` compat removal are on surfaces this extension does not touch.
+- **Bumped `typebox` devDependency to `^1.3.6`** — minor update from 1.2.x. TypeBox 1.3.0 is a low-impact maintenance revision that deprecates `Type.Base/Awaited/Promise/AsyncIterator/Iterator` and `Value.Mutate`; this extension only uses `Type.Object/String/Optional/Boolean`, so no code changes are required.
+
 ## [1.3.0] - 2026-06-17
 
 ### Changed
